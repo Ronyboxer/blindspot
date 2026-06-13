@@ -6,6 +6,8 @@ __pycache__/
 .venv/
 venv/
 data/
+computer_vision/models/
+.mcp.json
 *.db
 *.sqlite
 *.sqlite3

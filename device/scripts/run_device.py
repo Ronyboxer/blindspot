@@ -7,8 +7,10 @@ from device.blindspot_device.camera import MockCamera, PiCamera
 from device.blindspot_device.config import DeviceConfig
 from device.blindspot_device.feedback import ConsoleFeedback
 from device.blindspot_device.gps import MockGpsReader, SerialGpsReader
+from device.blindspot_device.ride_summary import QwenRideSummarizer
 from device.blindspot_device.store import LocalStore
 from device.blindspot_device.sync import SyncClient
+from device.blindspot_device.supabase_sync import SupabasePhotoUploader
 
 
 def main() -> None:
@@ -29,6 +31,8 @@ def main() -> None:
         feedback=ConsoleFeedback(),
         store=LocalStore(config.db_path),
         sync=SyncClient(config.backend_url, config.api_key),
+        photo_uploader=SupabasePhotoUploader.from_config(config),
+        ride_summarizer=QwenRideSummarizer.from_config(config),
     )
     ride_id = app.run_mock_ride(args.duration)
     print(f"ride_id={ride_id}")
