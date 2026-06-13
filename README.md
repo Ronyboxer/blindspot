@@ -90,6 +90,18 @@ python -m device.scripts.photo_button
 
 Pressing the button captures a photo to `data/device/photos` and flashes the LED strip.
 
+### LED status display
+
+| LED display | Meaning |
+|---|---|
+| One dim yellow LED | Ready / idle |
+| Solid amber | Capturing photo or toggling video |
+| Green flash | Saved / action confirmed |
+| Solid green | Ride is active |
+| Solid red | Video is recording |
+| Alternating red + green | Ride active and video recording |
+| Red flash | Error |
+
 ### One-button gestures
 
 | Gesture | Meaning | Photo prefix |

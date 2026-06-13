@@ -36,6 +36,9 @@ def main() -> None:
 
     ride_active = False
 
+    def display_state() -> None:
+        leds.show_state(ride_active=ride_active, video_recording=camera.is_recording_video)
+
     def handle_gesture(gesture: ButtonGesture) -> None:
         nonlocal ride_active
         if gesture == ButtonGesture.SINGLE:
@@ -46,7 +49,7 @@ def main() -> None:
             ride_active = not ride_active
             print(f"ride_state={'started' if ride_active else 'stopped'}")
             leds.saved()
-            leds.ready()
+            display_state()
 
     def capture_photo() -> None:
         try:
@@ -58,7 +61,7 @@ def main() -> None:
             print(f"gesture=single photo_error={exc}")
             leds.error()
         finally:
-            leds.ready()
+            display_state()
 
     def toggle_video() -> None:
         try:
@@ -74,9 +77,9 @@ def main() -> None:
             print(f"gesture=double video_error={exc}")
             leds.error()
         finally:
-            leds.ready()
+            display_state()
 
-    leds.ready()
+    display_state()
     print("Waiting for button gesture. single=photo, double=video start/stop, long=ride start/stop.")
     try:
         if args.once:

@@ -7,6 +7,9 @@ class LedStrip:
     def ready(self) -> None:
         raise NotImplementedError
 
+    def show_state(self, ride_active: bool = False, video_recording: bool = False) -> None:
+        raise NotImplementedError
+
     def capturing(self) -> None:
         raise NotImplementedError
 
@@ -23,6 +26,9 @@ class LedStrip:
 class ConsoleLedStrip(LedStrip):
     def ready(self) -> None:
         print("[led] ready")
+
+    def show_state(self, ride_active: bool = False, video_recording: bool = False) -> None:
+        print(f"[led] state ride_active={ride_active} video_recording={video_recording}")
 
     def capturing(self) -> None:
         print("[led] capturing")
@@ -63,9 +69,17 @@ class NeoPixelStrip(LedStrip):
         self._count = pixel_count
 
     def ready(self) -> None:
-        self._fill((0, 24, 0))
-        time.sleep(0.15)
-        self.off()
+        self.show_state()
+
+    def show_state(self, ride_active: bool = False, video_recording: bool = False) -> None:
+        if ride_active and video_recording:
+            self._pattern([(120, 0, 0), (0, 70, 0)] * ((self._count + 1) // 2))
+        elif video_recording:
+            self._fill((120, 0, 0))
+        elif ride_active:
+            self._fill((0, 70, 0))
+        else:
+            self._pattern([(28, 22, 0)] + [(0, 0, 0)] * (self._count - 1))
 
     def capturing(self) -> None:
         self._fill((255, 160, 0))
@@ -90,4 +104,9 @@ class NeoPixelStrip(LedStrip):
     def _fill(self, color: tuple[int, int, int]) -> None:
         for index in range(self._count):
             self._pixels[index] = color
+        self._pixels.show()
+
+    def _pattern(self, colors: list[tuple[int, int, int]]) -> None:
+        for index in range(self._count):
+            self._pixels[index] = colors[index % len(colors)]
         self._pixels.show()
