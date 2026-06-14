@@ -17,8 +17,14 @@ struct MapScreen: View {
     @Environment(AppEnvironment.self) private var environment
 
     @State private var viewModel = MapViewModel()
-    @State private var showReportPicker = false
-    @State private var reportError: String?
+    // Where the user tapped to drop a new hazard, + the type-picker toggle.
+    @State private var pendingCoordinate: CLLocationCoordinate2D?
+    @State private var showAddPicker = false
+    // A tapped hazard (shows the Report/Delete actions) + the one being emailed.
+    @State private var selectedHazard: Hazard?
+    @State private var hazardToEmail: Hazard?
+
+    private let reportEmail = "ronak.k.rupani@gmail.com"
 
     // Follow the rider's real location; fall back to San Jose until it's available.
     @State private var cameraPosition: MapCameraPosition = .userLocation(
@@ -32,32 +38,51 @@ struct MapScreen: View {
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottomTrailing) {
+            ZStack(alignment: .bottom) {
 
-                // MARK: Map with hazard annotations + the rider's live location
-                Map(position: $cameraPosition) {
-                    // The blue user-location dot (requires location permission).
-                    UserAnnotation()
+                // MapReader gives us a proxy to convert a tap point → coordinate.
+                MapReader { proxy in
+                    // MARK: Map with hazard annotations + the rider's live location
+                    Map(position: $cameraPosition) {
+                        // The blue user-location dot (requires location permission).
+                        UserAnnotation()
 
-                    ForEach(viewModel.hazards) { hazard in
-                        Annotation(
-                            hazard.type.displayName,
-                            coordinate: CLLocationCoordinate2D(latitude: hazard.lat, longitude: hazard.lng)
-                        ) {
-                            HazardBadge(type: hazard.type, style: .pin)
+                        ForEach(viewModel.hazards) { hazard in
+                            Annotation(
+                                hazard.type.displayName,
+                                coordinate: CLLocationCoordinate2D(latitude: hazard.lat, longitude: hazard.lng)
+                            ) {
+                                // Tap a hazard to report (email) or delete it.
+                                Button { selectedHazard = hazard } label: {
+                                    HazardBadge(type: hazard.type, style: .pin)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .mapStyle(.standard(elevation: .flat))
+                    .mapControls {
+                        MapUserLocationButton()   // recenter on the rider
+                        MapCompass()
+                    }
+                    .ignoresSafeArea(edges: .top)
+                    // Tap empty map → drop a hazard at that point (pin taps are
+                    // handled by their own Button above and won't trigger this).
+                    .onTapGesture { point in
+                        if let coordinate = proxy.convert(point, from: .local) {
+                            pendingCoordinate = coordinate
+                            showAddPicker = true
                         }
                     }
                 }
-                .mapStyle(.standard(elevation: .flat))
-                .mapControls {
-                    MapUserLocationButton()   // recenter on the rider
-                    MapCompass()
-                }
-                .ignoresSafeArea(edges: .top)
 
-                // Report a hazard at the rider's current location.
-                reportButton
-                    .padding(.trailing, 16)
+                // Hint.
+                Text("Tap the map to add a hazard")
+                    .font(.bsCaption)
+                    .foregroundStyle(Color.bsWhite.opacity(0.7))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.bsCharcoal.opacity(0.9), in: Capsule())
                     .padding(.bottom, 24)
             }
             .navigationTitle("Hazard Map")
@@ -77,52 +102,82 @@ struct MapScreen: View {
                     ProgressView().tint(.bsPrimary)
                 }
             }
-            // Pick the hazard type to drop at the current location.
-            .confirmationDialog("Report a hazard here", isPresented: $showReportPicker,
+            // Pick the hazard type to drop at the tapped location.
+            .confirmationDialog("Add a hazard here", isPresented: $showAddPicker,
                                 titleVisibility: .visible) {
                 ForEach(HazardType.allCases) { type in
-                    Button(type.displayName) { reportHazard(type) }
+                    Button(type.displayName) { addHazard(type) }
                 }
                 Button("Cancel", role: .cancel) {}
             }
-            .alert("Location unavailable",
-                   isPresented: Binding(get: { reportError != nil },
-                                        set: { if !$0 { reportError = nil } })) {
-                Button("OK", role: .cancel) { reportError = nil }
-            } message: {
-                Text(reportError ?? "")
+            // Tapped a hazard → Report (email) or Delete.
+            .confirmationDialog(
+                selectedHazard?.type.displayName ?? "Hazard",
+                isPresented: Binding(get: { selectedHazard != nil },
+                                     set: { if !$0 { selectedHazard = nil } }),
+                titleVisibility: .visible,
+                presenting: selectedHazard
+            ) { hazard in
+                Button("Report (email)") { reportByEmail(hazard); selectedHazard = nil }
+                Button("Delete", role: .destructive) { deleteHazard(hazard); selectedHazard = nil }
+                Button("Cancel", role: .cancel) { selectedHazard = nil }
+            }
+            // Mail composer for reporting a hazard (user reviews + sends).
+            .sheet(item: $hazardToEmail) { hazard in
+                MailView(recipients: [reportEmail],
+                         subject: "Blind Spot — Hazard report: \(hazard.type.displayName)",
+                         body: hazardEmailBody(hazard))
             }
         }
     }
 
-    // MARK: Report button
+    // MARK: Hazard actions
 
-    private var reportButton: some View {
-        Button {
-            showReportPicker = true
-        } label: {
-            Image(systemName: "flag.fill")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(Color.bsBlack)
-                .frame(width: 60, height: 60)
-                .background(Circle().fill(Color.bsPrimary))
-                .overlay(Circle().stroke(Color.bsBlack.opacity(0.25), lineWidth: 1))
-                .shadow(radius: 6)
+    private func deleteHazard(_ hazard: Hazard) {
+        Task {
+            try? await environment.hazardRepository.deleteHazard(id: hazard.id)
+            await viewModel.load(using: environment.hazardRepository)
         }
-        .accessibilityLabel("Report a hazard at my location")
     }
 
-    /// Report a hazard of `type` at the rider's current GPS location.
-    private func reportHazard(_ type: HazardType) {
-        guard let loc = environment.locationService.currentLocation else {
-            reportError = "Waiting for your location — try again in a moment."
-            return
+    private func reportByEmail(_ hazard: Hazard) {
+        if MailView.canSend {
+            hazardToEmail = hazard
+        } else if let url = mailtoURL(for: hazard) {
+            UIApplication.shared.open(url)
         }
+    }
+
+    private func hazardEmailBody(_ hazard: Hazard) -> String {
+        """
+        Blind Spot hazard report
+
+        Type: \(hazard.type.displayName)
+        Location: \(Format.coord(lat: hazard.lat, lng: hazard.lng))
+        Reported: \(Format.rideDate(hazard.firstReportedAt))
+        Status: \(hazard.status.displayName)
+        Confirmations: \(hazard.confirmCount)
+        """
+    }
+
+    private func mailtoURL(for hazard: Hazard) -> URL? {
+        var c = URLComponents(string: "mailto:\(reportEmail)")
+        c?.queryItems = [
+            URLQueryItem(name: "subject", value: "Blind Spot — Hazard report: \(hazard.type.displayName)"),
+            URLQueryItem(name: "body", value: hazardEmailBody(hazard))
+        ]
+        return c?.url
+    }
+
+    /// Add a hazard of `type` at the tapped map coordinate.
+    private func addHazard(_ type: HazardType) {
+        guard let coordinate = pendingCoordinate else { return }
         let hazard = Hazard(
-            lat: loc.coordinate.latitude, lng: loc.coordinate.longitude,
+            lat: coordinate.latitude, lng: coordinate.longitude,
             type: type, severity: .moderate, status: .reported,
             firstReportedAt: Date()
         )
+        pendingCoordinate = nil
         Task {
             try? await environment.hazardRepository.reportHazard(hazard)
             await viewModel.load(using: environment.hazardRepository)

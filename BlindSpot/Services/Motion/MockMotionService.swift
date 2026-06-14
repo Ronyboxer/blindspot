@@ -9,6 +9,6 @@ import Foundation
 
 final class MockMotionService: MotionService {
     var isAvailable: Bool { false }
-    func start(onSample: @escaping (Double) -> Void) {}
+    func start(onSample: @escaping (_ impact: Double, _ total: Double) -> Void) {}
     func stop() {}
 }

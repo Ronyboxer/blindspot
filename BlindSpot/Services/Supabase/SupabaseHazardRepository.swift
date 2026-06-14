@@ -35,6 +35,10 @@ final class SupabaseHazardRepository: HazardRepository {
         try await client.from("hazards").insert(HazardRow(hazard, userId: userId())).execute()
     }
 
+    func deleteHazard(id: UUID) async throws {
+        try await client.from("hazards").delete().eq("id", value: id.uuidString).execute()
+    }
+
     // MARK: - DB row
 
     private struct HazardRow: Codable {

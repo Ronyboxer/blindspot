@@ -12,8 +12,9 @@ import Foundation
 protocol MotionService: AnyObject {
     var isAvailable: Bool { get }
 
-    /// Start IMU updates. `onSample` receives the user-acceleration magnitude in
-    /// g (≈0 at rest, spikes on bumps/impacts), delivered on the main thread.
-    func start(onSample: @escaping (Double) -> Void)
+    /// Start IMU updates, delivered on the main thread:
+    ///  - `impact`: user-acceleration magnitude in g (≈0 at rest, spikes on hits)
+    ///  - `total`:  total measured acceleration in g (≈1 at rest, ≈0 in free fall)
+    func start(onSample: @escaping (_ impact: Double, _ total: Double) -> Void)
     func stop()
 }

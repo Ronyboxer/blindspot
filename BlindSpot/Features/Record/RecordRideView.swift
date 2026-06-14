@@ -21,6 +21,8 @@ struct RecordRideView: View {
     @State private var path: [UUID] = []
     // Shows the hazard-type chooser when flagging.
     @State private var showFlagPicker = false
+    // Shows the SOS text composer to the emergency contact.
+    @State private var showSOSMessage = false
 
     // The shared ride lifecycle (also driven by the Raspberry Pi via HTTP).
     private var controller: RideController { environment.rideController }
@@ -57,6 +59,14 @@ struct RecordRideView: View {
             // Haptic each time an event is flagged (count goes up). iOS 17 API.
             .sensoryFeedback(.success, trigger: controller.events.count)
             .animation(.easeInOut, value: controller.sosActive)
+            // When the SOS countdown completes (not dismissed), text the contact.
+            .onChange(of: controller.sosSent) { _, sent in
+                if sent { presentSOSMessage() }
+            }
+            .sheet(isPresented: $showSOSMessage) {
+                MessageComposeView(recipients: [emergencyPhone],
+                                   body: sosMessageBody) { controller.dismissSOS() }
+            }
             // Ask for location up front so the first ride has GPS immediately.
             // (Pi ride control is now over BLE — see Profile → Pi Pairing.)
             .task {
@@ -190,6 +200,30 @@ struct RecordRideView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
         }
+    }
+
+    // MARK: - SOS messaging
+
+    /// Phone number digits extracted from the saved emergency contact.
+    private var emergencyPhone: String {
+        let raw = environment.profile?.emergencyContact ?? ""
+        return raw.filter { $0.isNumber || $0 == "+" }
+    }
+
+    private var sosMessageBody: String {
+        var msg = "🚨 Blind Spot SOS — I may have crashed during a bike ride and didn't respond."
+        if let loc = environment.locationService.currentLocation {
+            let lat = loc.coordinate.latitude, lng = loc.coordinate.longitude
+            msg += "\nMy location: \(String(format: "%.5f, %.5f", lat, lng))"
+            msg += "\nhttps://maps.apple.com/?ll=\(lat),\(lng)"
+        }
+        return msg
+    }
+
+    /// Open a pre-filled SOS text to the emergency contact (they tap send).
+    private func presentSOSMessage() {
+        guard emergencyPhone.count >= 7, MessageComposeView.canSend else { return }
+        showSOSMessage = true
     }
 }
 

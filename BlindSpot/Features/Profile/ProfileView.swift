@@ -13,6 +13,7 @@ import SwiftUI
 struct ProfileView: View {
 
     @Environment(AppEnvironment.self) private var environment
+    @State private var showContactPicker = false
 
     var body: some View {
         NavigationStack {
@@ -125,14 +126,61 @@ struct ProfileView: View {
     private var emergencyCard: some View {
         BSCard {
             VStack(alignment: .leading, spacing: 12) {
-                labeledField("EMERGENCY CONTACT", placeholder: "Name & phone",
+                Text("EMERGENCY CONTACT")
+                    .font(.bsCaption)
+                    .tracking(1.2)
+                    .foregroundStyle(Color.bsWhite.opacity(0.6))
+
+                // Big tap-to-pick button — no typing needed.
+                Button {
+                    showContactPicker = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(Color.bsBlack)
+                        Text(environment.profile?.emergencyContact?.isEmpty == false
+                             ? environment.profile!.emergencyContact!
+                             : "Choose from Contacts")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.bsBlack)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.vertical, 14)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.bsPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                // Manual fallback / edit.
+                labeledField("OR ENTER MANUALLY", placeholder: "Name & phone",
                              text: bindingFor(\.emergencyContact),
                              font: .bsBody, keyboard: .phonePad, autocap: .words)
 
-                Text("Used by the crash-SOS flow to know who to alert.")
+                if environment.profile?.emergencyContact?.isEmpty == false {
+                    Button(role: .destructive) {
+                        environment.profile?.emergencyContact = nil
+                    } label: {
+                        Label("Clear contact", systemImage: "xmark.circle")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.bsSevere)
+                    }
+                }
+
+                Text("Texted automatically if the crash-SOS countdown isn't dismissed.")
                     .font(.system(size: 12))
                     .foregroundStyle(Color.bsWhite.opacity(0.4))
             }
+        }
+        .sheet(isPresented: $showContactPicker) {
+            ContactPicker { name, phone in
+                let combined = [name, phone].filter { !$0.isEmpty }.joined(separator: " · ")
+                environment.profile?.emergencyContact = combined.isEmpty ? phone : combined
+                showContactPicker = false
+            }
+            .ignoresSafeArea()
         }
     }
 

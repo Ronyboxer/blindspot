@@ -47,6 +47,18 @@ enum HazardType: String, Codable, CaseIterable, Identifiable {
         case .construction: return "cone.fill"
         }
     }
+
+    /// Distinct color per hazard type so the map pins are differentiable.
+    var color: Color {
+        switch self {
+        case .pothole:      return .bsPrimary            // coral
+        case .debris:       return Color(hex: 0xE6BC00)  // amber
+        case .glass:        return Color(hex: 0x2BB3C0)  // teal
+        case .water:        return Color(hex: 0x3B82F6)  // blue
+        case .blockedLane:  return .bsSevere             // red
+        case .construction: return .bsModerate           // orange
+        }
+    }
 }
 
 // MARK: - Severity

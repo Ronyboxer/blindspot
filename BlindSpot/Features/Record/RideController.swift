@@ -57,12 +57,15 @@ final class RideController {
 
     // Crash SOS shell
     private(set) var sosActive = false
-    private(set) var sosCountdown = 15
+    private(set) var sosCountdown = RideController.sosSeconds
     private(set) var sosSent = false
 
     // Tuning
-    static let impactThreshold = 2.2   // g → logs an impact event
-    static let crashThreshold = 3.5    // g → auto-triggers crash SOS
+    static let sosSeconds = 5            // crash-SOS countdown length (seconds)
+    static let impactThreshold = 2.2     // g → logs an impact event
+    static let crashThreshold = 3.5      // g → big standalone impact = crash SOS
+    static let freeFallThreshold = 0.35  // g (total) → device is ~weightless (falling)
+    static let fallImpactThreshold = 1.8 // g → impact right after a free-fall = a fall
 
     // MARK: Private
     private var rideStart: Date?
@@ -71,6 +74,7 @@ final class RideController {
     private var timer: Timer?
     private var sosTimer: Timer?
     private var lastImpactAt: Date?
+    private var lastFreeFallAt: Date?
 
     // MARK: - Start (creates the Supabase row, returns its id)
 
@@ -99,8 +103,8 @@ final class RideController {
         saveError = nil
 
         locationService.startTracking()
-        motionService.start { [weak self] magnitude in
-            Task { @MainActor in self?.handleMotion(magnitude) }
+        motionService.start { [weak self] impact, total in
+            Task { @MainActor in self?.handleMotion(impact: impact, total: total) }
         }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -146,9 +150,13 @@ final class RideController {
 
     // MARK: - IMU / impacts
 
-    private func handleMotion(_ magnitude: Double) {
-        peakIMU = max(peakIMU, magnitude)
-        guard magnitude >= Self.impactThreshold else { return }
+    private func handleMotion(impact: Double, total: Double) {
+        peakIMU = max(peakIMU, impact)
+
+        // Remember the moment of free-fall (device weightless = falling).
+        if total < Self.freeFallThreshold { lastFreeFallAt = Date() }
+
+        guard impact >= Self.impactThreshold else { return }
 
         let now = Date()
         let cooled = lastImpactAt.map { now.timeIntervalSince($0) > 3 } ?? true
@@ -158,10 +166,13 @@ final class RideController {
         let coord = locationService.currentLocation?.coordinate
         events.append(RideEvent(type: .impact,
                                 lat: coord?.latitude ?? 0, lng: coord?.longitude ?? 0,
-                                imuMagnitude: magnitude, occurredAt: now, detected: true))
+                                imuMagnitude: impact, occurredAt: now, detected: true))
 
-        if magnitude >= Self.crashThreshold {
-            triggerCrashSOS(magnitude: magnitude, detected: true)
+        // A fast FALL = free-fall immediately followed by an impact. Also fire on a
+        // very large standalone impact (a hard crash with no clean free-fall phase).
+        let justFell = lastFreeFallAt.map { now.timeIntervalSince($0) < 1.2 } ?? false
+        if (justFell && impact >= Self.fallImpactThreshold) || impact >= Self.crashThreshold {
+            triggerCrashSOS(magnitude: impact, detected: true)
         }
     }
 
@@ -252,7 +263,7 @@ final class RideController {
                                     lat: coord?.latitude ?? 0, lng: coord?.longitude ?? 0,
                                     imuMagnitude: magnitude, occurredAt: Date(), detected: detected))
         }
-        sosActive = true; sosSent = false; sosCountdown = 15
+        sosActive = true; sosSent = false; sosCountdown = Self.sosSeconds
         sosTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.sosTick() }
         }
@@ -267,7 +278,7 @@ final class RideController {
 
     func dismissSOS() {
         sosTimer?.invalidate(); sosTimer = nil
-        sosActive = false; sosSent = false; sosCountdown = 15
+        sosActive = false; sosSent = false; sosCountdown = Self.sosSeconds
     }
 }
 

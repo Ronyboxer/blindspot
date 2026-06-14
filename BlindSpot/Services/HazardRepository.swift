@@ -18,4 +18,7 @@ protocol HazardRepository {
 
     /// Report a new hazard (e.g. when the rider flags one during a ride).
     func reportHazard(_ hazard: Hazard) async throws
+
+    /// Remove a hazard from the map.
+    func deleteHazard(id: UUID) async throws
 }

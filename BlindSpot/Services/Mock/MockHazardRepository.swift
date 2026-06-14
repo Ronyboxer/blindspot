@@ -28,4 +28,8 @@ final class MockHazardRepository: HazardRepository {
     func reportHazard(_ hazard: Hazard) async throws {
         hazards.append(hazard)
     }
+
+    func deleteHazard(id: UUID) async throws {
+        hazards.removeAll { $0.id == id }
+    }
 }

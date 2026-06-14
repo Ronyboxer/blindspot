@@ -31,7 +31,7 @@ struct HazardBadge: View {
     private var pin: some View {
         ZStack {
             Circle()
-                .fill(Color.bsPrimary)
+                .fill(type.color)
                 .frame(width: 34, height: 34)
                 .overlay(Circle().stroke(Color.bsBlack, lineWidth: 2))
                 .shadow(radius: 3)
@@ -49,7 +49,7 @@ struct HazardBadge: View {
         HStack(spacing: 8) {
             Image(systemName: type.symbolName)
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Color.bsPrimary)
+                .foregroundStyle(type.color)
             Text(type.displayName)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.bsWhite)
