@@ -460,6 +460,49 @@ svg {
   font-size: 13px;
 }
 
+.sync-strip {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 10px;
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: var(--charcoal);
+  color: rgba(250, 250, 247, 0.66);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(250, 250, 247, 0.34);
+}
+
+.sync-dot.live {
+  background: var(--good);
+  box-shadow: 0 0 0 4px rgba(48, 164, 108, 0.16);
+}
+
+.sync-dot.error {
+  background: var(--severe);
+  box-shadow: 0 0 0 4px rgba(229, 72, 77, 0.16);
+}
+
+.sync-strip button {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(238, 86, 52, 0.16);
+  color: var(--primary-bright);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .hazard-list {
   display: grid;
   gap: 9px;
@@ -937,6 +980,13 @@ svg {
   color: rgba(250, 250, 247, 0.32);
 }
 
+.photo-cell img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
 .machine-dot {
   position: absolute;
   right: 6px;
@@ -964,6 +1014,7 @@ svg {
 }
 
 .profile-card label,
+.supabase-card label,
 .manual-contact {
   display: grid;
   gap: 7px;
@@ -1014,6 +1065,29 @@ input:focus {
   border-radius: 14px;
   background: var(--primary);
   color: var(--black);
+}
+
+.supabase-card {
+  display: grid;
+  gap: 12px;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.secondary-button {
+  min-height: 52px;
+  border-radius: 14px;
+  padding: 0 14px;
+  background: var(--charcoal);
+  color: var(--white);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1px;
 }
 
 .manual-contact {

@@ -4,7 +4,10 @@ const hazardTypes = {
   glass: { label: "Glass", color: "#2bb3c0", icon: "icon-warning" },
   water: { label: "Water", color: "#3b82f6", icon: "icon-warning" },
   blockedLane: { label: "Blocked Lane", color: "#e5484d", icon: "icon-warning" },
-  construction: { label: "Construction", color: "#ff8a00", icon: "icon-warning" }
+  construction: { label: "Construction", color: "#ff8a00", icon: "icon-warning" },
+  noBikeLane: { label: "No Bike Lane", color: "#e5484d", icon: "icon-warning" },
+  roughSurface: { label: "Rough Surface", color: "#ff8a00", icon: "icon-warning" },
+  capturedPhoto: { label: "Captured Photo", color: "#ee5634", icon: "icon-camera" }
 };
 
 const titles = {
@@ -14,6 +17,14 @@ const titles = {
   profile: "Profile",
   recap: "Recap",
   pairing: "Pi Pairing"
+};
+
+const SUPABASE_CONFIG_STORAGE_KEY = "blindspot.supabase.config";
+const SAN_JOSE_BOUNDS = {
+  minLat: 37.326,
+  maxLat: 37.35,
+  minLng: -121.899,
+  maxLng: -121.875
 };
 
 let hazards = [
@@ -104,9 +115,18 @@ let bleLog = [
   "connected: BlindSpot-Pi",
   "rx ride_start -> ready"
 ];
+let supabaseClient = null;
+let supabaseChannel = null;
+let supabaseConfig = null;
+let syncBusy = false;
+let syncDebounce = null;
+let openRecapRideId = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+const clone = (value) => JSON.parse(JSON.stringify(value));
+const seedHazards = clone(hazards);
+const seedRides = clone(rides);
 
 function icon(id) {
   return `<svg aria-hidden="true"><use href="#${id}"></use></svg>`;
@@ -136,6 +156,7 @@ function showScreen(screen, options = {}) {
 
 function showTab(tab) {
   detailParent = null;
+  openRecapRideId = null;
   activeTab = tab;
   showScreen(tab);
 }
@@ -175,27 +196,476 @@ function closeSheet() {
   $("#actionSheet").classList.add("hidden");
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function getHazardType(type) {
+  return hazardTypes[type] || hazardTypes.capturedPhoto;
+}
+
+function normalizeHazardType(type) {
+  const value = String(type || "").trim();
+  const normalized = value
+    .replace(/[-_\s]+([a-z])/g, (_, letter) => letter.toUpperCase())
+    .replace(/^[A-Z]/, (letter) => letter.toLowerCase());
+  return hazardTypes[normalized] ? normalized : "capturedPhoto";
+}
+
+function toSnakeHazardType(type) {
+  return String(type).replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function coordinateToScreen(lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+  const x = ((lng - SAN_JOSE_BOUNDS.minLng) / (SAN_JOSE_BOUNDS.maxLng - SAN_JOSE_BOUNDS.minLng)) * 100;
+  const y = (1 - ((lat - SAN_JOSE_BOUNDS.minLat) / (SAN_JOSE_BOUNDS.maxLat - SAN_JOSE_BOUNDS.minLat))) * 100;
+  return { x: clamp(Math.round(x), 8, 92), y: clamp(Math.round(y), 12, 82) };
+}
+
+function screenToCoordinate(x, y) {
+  const lng = SAN_JOSE_BOUNDS.minLng + (clamp(x, 0, 100) / 100) * (SAN_JOSE_BOUNDS.maxLng - SAN_JOSE_BOUNDS.minLng);
+  const lat = SAN_JOSE_BOUNDS.minLat + (1 - clamp(y, 0, 100) / 100) * (SAN_JOSE_BOUNDS.maxLat - SAN_JOSE_BOUNDS.minLat);
+  return { lat, lng };
+}
+
+function seededPosition(seed) {
+  let hash = 0;
+  for (const char of String(seed)) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }
+  return {
+    x: 18 + (hash % 65),
+    y: 18 + ((hash >>> 8) % 56)
+  };
+}
+
+function numberFrom(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function arrayFrom(value) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value && typeof value === "object") return Object.values(value).filter(Boolean);
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
+function unique(values) {
+  return Array.from(new Set(values.map((value) => String(value).trim()).filter(Boolean)));
+}
+
+function formatRideDate(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
+function formatMilesFromMeters(meters) {
+  return (Math.max(0, meters) / 1609.344).toFixed(2);
+}
+
+function formatMphFromMps(mps) {
+  return (Math.max(0, mps) * 2.236936).toFixed(1);
+}
+
+function getStoredSupabaseConfig() {
+  const runtime = window.BLINDSPOT_SUPABASE_CONFIG;
+  if (runtime?.url && runtime?.publishableKey) {
+    return {
+      url: runtime.url.trim(),
+      publishableKey: runtime.publishableKey.trim()
+    };
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(SUPABASE_CONFIG_STORAGE_KEY) || "null");
+    if (stored?.url && stored?.publishableKey) {
+      return {
+        url: stored.url.trim(),
+        publishableKey: stored.publishableKey.trim()
+      };
+    }
+  } catch {
+    localStorage.removeItem(SUPABASE_CONFIG_STORAGE_KEY);
+  }
+  return null;
+}
+
+function setSyncStatus(mode, message) {
+  const label = $("#supabaseStateLabel");
+  const statusLine = $("#supabaseStatusLine");
+  const syncText = $("#syncStatusText");
+  const dot = $("#syncDot");
+  if (label) {
+    label.textContent = mode === "live" ? "Live" : mode === "loading" ? "Syncing" : mode === "error" ? "Error" : "Mock";
+  }
+  if (statusLine) statusLine.textContent = message;
+  if (syncText) syncText.textContent = message;
+  if (dot) {
+    dot.classList.toggle("live", mode === "live");
+    dot.classList.toggle("error", mode === "error");
+  }
+}
+
+function restoreSupabaseForm() {
+  const config = getStoredSupabaseConfig();
+  if ($("#supabaseUrlInput") && config) {
+    $("#supabaseUrlInput").value = config.url;
+    $("#supabaseKeyInput").value = config.publishableKey;
+  }
+  setSyncStatus(config ? "loading" : "mock", config ? "Ready to sync" : "Mock data");
+}
+
+async function connectSupabaseFromForm() {
+  const url = $("#supabaseUrlInput").value.trim();
+  const publishableKey = $("#supabaseKeyInput").value.trim();
+  if (!url || !publishableKey) {
+    setSyncStatus("error", "Enter URL and key");
+    return;
+  }
+  if (publishableKey.startsWith("sb_secret_") || publishableKey.toLowerCase().includes("service_role")) {
+    setSyncStatus("error", "Use a publishable key, not a secret key");
+    return;
+  }
+  localStorage.setItem(SUPABASE_CONFIG_STORAGE_KEY, JSON.stringify({ url, publishableKey }));
+  await initSupabase();
+}
+
+async function initSupabase() {
+  supabaseConfig = getStoredSupabaseConfig();
+  if (!supabaseConfig) {
+    setSyncStatus("mock", "Mock data");
+    return;
+  }
+  if (!window.supabase?.createClient) {
+    setSyncStatus("error", "Supabase library unavailable");
+    return;
+  }
+  supabaseClient = window.supabase.createClient(supabaseConfig.url, supabaseConfig.publishableKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
+    }
+  });
+  setSyncStatus("loading", "Syncing from Supabase");
+  await syncFromSupabase();
+  subscribeSupabaseRealtime();
+}
+
+function clearSupabaseConfig() {
+  if (supabaseClient && supabaseChannel) {
+    supabaseClient.removeChannel(supabaseChannel);
+  }
+  localStorage.removeItem(SUPABASE_CONFIG_STORAGE_KEY);
+  supabaseConfig = null;
+  supabaseClient = null;
+  supabaseChannel = null;
+  hazards = clone(seedHazards);
+  rides = clone(seedRides);
+  renderHazards();
+  renderRides();
+  setSyncStatus("mock", "Mock data");
+  toast("Supabase config cleared");
+}
+
+async function selectTable(table, applyQuery, options = {}) {
+  if (!supabaseClient) return [];
+  let query = supabaseClient.from(table).select("*");
+  if (applyQuery) query = applyQuery(query);
+  const { data, error } = await query;
+  if (error) {
+    if (options.required) {
+      throw new Error(`${table}: ${error.message}`);
+    }
+    console.warn(`Supabase ${table} skipped:`, error.message);
+    return [];
+  }
+  return data || [];
+}
+
+async function syncFromSupabase() {
+  if (!supabaseClient || syncBusy) return;
+  syncBusy = true;
+  setSyncStatus("loading", "Syncing from Supabase");
+  try {
+    await Promise.all([
+      loadSupabaseRides(),
+      loadSupabaseHazards()
+    ]);
+    setSyncStatus("live", `Live: ${rides.length} rides, ${hazards.length} hazards`);
+    if (openRecapRideId) openRecap(openRecapRideId);
+  } catch (error) {
+    console.warn("Supabase sync failed:", error);
+    setSyncStatus("error", error.message || "Supabase sync failed");
+  } finally {
+    syncBusy = false;
+  }
+}
+
+function scheduleSupabaseSync() {
+  window.clearTimeout(syncDebounce);
+  syncDebounce = window.setTimeout(syncFromSupabase, 500);
+}
+
+function subscribeSupabaseRealtime() {
+  if (!supabaseClient) return;
+  if (supabaseChannel) {
+    supabaseClient.removeChannel(supabaseChannel);
+  }
+  supabaseChannel = supabaseClient.channel("blindspot-phone-demo");
+  ["rides", "photos", "automated_photos", "ai_summary", "hazards", "ride_events"].forEach((table) => {
+    supabaseChannel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table },
+      scheduleSupabaseSync
+    );
+  });
+  supabaseChannel.subscribe((status) => {
+    if (status === "SUBSCRIBED") {
+      setSyncStatus("live", `Live: ${rides.length} rides, ${hazards.length} hazards`);
+    }
+  });
+}
+
+async function loadSupabaseHazards() {
+  const hazardRows = await selectTable("hazards", (query) =>
+    query.order("first_reported_at", { ascending: false }).limit(500)
+  );
+  if (hazardRows.length) {
+    hazards = hazardRows.map(hazardFromSupabaseRow);
+    renderHazards();
+    return;
+  }
+
+  const manualPhotos = await selectTable("photos", (query) =>
+    query.order("captured_at", { ascending: false }).limit(100)
+  );
+  const photoHazards = manualPhotos
+    .filter((row) => Number.isFinite(Number(row.lat)) && Number.isFinite(Number(row.lng)))
+    .map((row) => photoHazardFromSupabaseRow(row));
+  hazards = photoHazards;
+  renderHazards();
+}
+
+async function loadSupabaseRides() {
+  const rideRows = await selectTable(
+    "rides",
+    (query) => query.order("started_at", { ascending: false }).limit(50),
+    { required: true }
+  );
+  const [summaryRows, manualPhotoRows, machinePhotoRows, eventRows] = await Promise.all([
+    selectTable("ai_summary", (query) => query.order("created_at", { ascending: false }).limit(100)),
+    selectTable("photos", (query) => query.order("captured_at", { ascending: false }).limit(300)),
+    selectTable("automated_photos", (query) => query.order("captured_at", { ascending: false }).limit(300)),
+    selectTable("ride_events", (query) => query.order("occurred_at", { ascending: true }).limit(500))
+  ]);
+
+  const summariesByRide = latestByRide(summaryRows);
+  const photosByRide = groupByRide([
+    ...manualPhotoRows.map((row) => ({ ...row, isMachine: false })),
+    ...machinePhotoRows.map((row) => ({ ...row, isMachine: true }))
+  ]);
+  const eventsByRide = groupByRide(eventRows);
+
+  rides = rideRows.map((row) => rideFromSupabaseRow(
+    row,
+    summariesByRide.get(String(row.id)),
+    photosByRide.get(String(row.id)) || [],
+    eventsByRide.get(String(row.id)) || []
+  ));
+  renderRides();
+}
+
+function groupByRide(rows) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const rideId = String(row.ride_id || "");
+    if (!rideId) return;
+    if (!grouped.has(rideId)) grouped.set(rideId, []);
+    grouped.get(rideId).push(row);
+  });
+  return grouped;
+}
+
+function latestByRide(rows) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const rideId = String(row.ride_id || "");
+    if (!rideId || row.summary_type && row.summary_type !== "ride") return;
+    if (!grouped.has(rideId)) grouped.set(rideId, row);
+  });
+  return grouped;
+}
+
+function hazardFromSupabaseRow(row) {
+  const position = coordinateToScreen(Number(row.lat), Number(row.lng)) || seededPosition(row.id);
+  return {
+    id: String(row.id),
+    type: normalizeHazardType(row.type),
+    x: position.x,
+    y: position.y,
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    status: titleCase(row.status || "reported"),
+    confirmations: Number(row.confirm_count || 1),
+    age: relativeAge(row.last_confirmed_at || row.first_reported_at)
+  };
+}
+
+function photoHazardFromSupabaseRow(row) {
+  const position = coordinateToScreen(Number(row.lat), Number(row.lng)) || seededPosition(row.id);
+  return {
+    id: String(row.id),
+    type: "capturedPhoto",
+    x: position.x,
+    y: position.y,
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    status: "Captured",
+    confirmations: 1,
+    age: relativeAge(row.captured_at || row.created_at)
+  };
+}
+
+function rideFromSupabaseRow(row, summary, photoRows, eventRows) {
+  const distanceMeters = numberFrom(row.distance_meters, row.distance_m, summary?.distance_m, summary?.metrics?.distance_m);
+  const durationSeconds = numberFrom(row.duration_seconds, row.duration_s, summary?.duration_s, summary?.metrics?.duration_s);
+  const avgSpeed = numberFrom(row.avg_speed, durationSeconds > 0 ? distanceMeters / durationSeconds : 0);
+  const score = Math.round(numberFrom(row.safety_score, row.accessibility_score, summary?.accessibility_score, 0));
+  const ratingWord = titleCase(row.accessibility_rating || summary?.accessibility_rating || (score >= 80 ? "good" : score >= 50 ? "fair" : "poor"));
+  const tags = unique([
+    ...arrayFrom(row.accessibility_labels),
+    ...arrayFrom(row.accessibility_map_tags),
+    ...arrayFrom(row.road_hazards),
+    ...arrayFrom(summary?.labels),
+    ...arrayFrom(summary?.road_hazards),
+    ...arrayFrom(summary?.recommended_map_tags)
+  ]).slice(0, 8);
+  const photos = photoRows
+    .filter((photo) => photo.storage_url)
+    .map((photo) => ({
+      kind: photo.isMachine ? "machine" : "manual",
+      url: photo.storage_url
+    }));
+  const events = eventRows.length
+    ? eventRows.map((event, index) => eventFromSupabaseRow(event, index))
+    : photos.slice(0, 3).map((photo, index) => ({
+      icon: photo.kind === "machine" ? "icon-camera" : "icon-flag",
+      ...seededPosition(`${row.id}-${index}`)
+    }));
+
+  return {
+    id: String(row.id),
+    date: formatRideDate(row.started_at || row.created_at),
+    distance: formatMilesFromMeters(distanceMeters),
+    duration: formatDuration(Math.round(durationSeconds)),
+    avg: formatMphFromMps(avgSpeed),
+    safety: score || 0,
+    rating: Number(row.rating || 0),
+    favorite: Boolean(row.favorite),
+    hazards: eventRows.length || Number(row.photo_count || photos.length || 0),
+    potholes: Number(row.pothole_count ?? summary?.pothole_count ?? 0),
+    summary: summary?.summary || row.accessibility_summary || row.qwen_summary?.summary || "Synced ride from Supabase.",
+    ratingWord,
+    score,
+    tags: tags.length ? tags : ["synced"],
+    events,
+    photos
+  };
+}
+
+function eventFromSupabaseRow(row, index) {
+  const position = coordinateToScreen(Number(row.lat), Number(row.lng)) || seededPosition(`${row.id || row.ride_id}-${index}`);
+  return {
+    icon: row.type === "crash" || row.type === "impact" ? "icon-warning" : "icon-flag",
+    x: position.x,
+    y: position.y
+  };
+}
+
+function relativeAge(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "synced";
+  const seconds = Math.max(1, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+async function saveHazardToSupabase(hazard) {
+  if (!supabaseClient) return;
+  const coord = Number.isFinite(hazard.lat) && Number.isFinite(hazard.lng)
+    ? { lat: hazard.lat, lng: hazard.lng }
+    : screenToCoordinate(hazard.x, hazard.y);
+  const row = {
+    lat: coord.lat,
+    lng: coord.lng,
+    type: toSnakeHazardType(hazard.type),
+    severity: "moderate",
+    status: "reported",
+    confirm_count: 1,
+    first_reported_at: new Date().toISOString()
+  };
+  const { error } = await supabaseClient.from("hazards").insert(row);
+  if (error) {
+    console.warn("Hazard insert skipped:", error.message);
+    toast("Saved locally");
+    return;
+  }
+  await syncFromSupabase();
+}
+
 function renderHazards() {
   const pins = $("#hazardPins");
   pins.innerHTML = hazards.map((hazard) => {
-    const type = hazardTypes[hazard.type];
+    const type = getHazardType(hazard.type);
     return `
-      <button class="map-pin" type="button" data-hazard="${hazard.id}" style="left:${hazard.x}%;top:${hazard.y}%;--pin-color:${type.color}" aria-label="${type.label}">
+      <button class="map-pin" type="button" data-hazard="${escapeAttribute(hazard.id)}" style="left:${hazard.x}%;top:${hazard.y}%;--pin-color:${type.color}" aria-label="${escapeAttribute(type.label)}">
         ${icon(type.icon)}
       </button>
     `;
   }).join("");
 
   $("#hazardList").innerHTML = hazards.map((hazard) => {
-    const type = hazardTypes[hazard.type];
+    const type = getHazardType(hazard.type);
     return `
-      <button class="hazard-row" type="button" data-hazard="${hazard.id}">
+      <button class="hazard-row" type="button" data-hazard="${escapeAttribute(hazard.id)}">
         <span class="hazard-dot" style="--pin-color:${type.color}">${icon(type.icon)}</span>
         <span>
-          <strong>${type.label}</strong>
-          <small>${hazard.status} - ${hazard.confirmations} confirms - ${hazard.age}</small>
+          <strong>${escapeHtml(type.label)}</strong>
+          <small>${escapeHtml(hazard.status)} - ${escapeHtml(hazard.confirmations)} confirms - ${escapeHtml(hazard.age)}</small>
         </span>
-        <span class="pill">${hazard.status}</span>
+        <span class="pill">${escapeHtml(hazard.status)}</span>
       </button>
     `;
   }).join("");
@@ -206,18 +676,23 @@ function renderHazards() {
 function addHazardAt(x, y) {
   openSheet("Add a hazard here", Object.keys(hazardTypes).map((key) => ({
     label: hazardTypes[key].label,
-    onClick: () => {
-      hazards.unshift({
+    onClick: async () => {
+      const coord = screenToCoordinate(x, y);
+      const hazard = {
         id: `h${Date.now()}`,
         type: key,
         x,
         y,
+        lat: coord.lat,
+        lng: coord.lng,
         status: "Reported",
         confirmations: 1,
         age: "now"
-      });
+      };
+      hazards.unshift(hazard);
       renderHazards();
       toast(`${hazardTypes[key].label} added`);
+      await saveHazardToSupabase(hazard);
     }
   })));
 }
@@ -257,20 +732,20 @@ function renderRides() {
   $("#rideList").innerHTML = rides.map((ride) => `
     <article class="ride-row">
       <div class="ride-row-header">
-        <button class="ride-row-title" data-open-ride="${ride.id}" type="button">
+        <button class="ride-row-title" data-open-ride="${escapeAttribute(ride.id)}" type="button">
           ${ride.favorite ? '<span class="favorite-star" aria-hidden="true">&#9733;</span>' : ""}
-          <strong>${ride.date}</strong>
+          <strong>${escapeHtml(ride.date)}</strong>
         </button>
         ${safetyBadge(ride.safety)}
       </div>
-      <button class="row-stats" data-open-ride="${ride.id}" type="button">
-        <span class="row-stat"><strong>${ride.distance}</strong><span>DISTANCE</span></span>
-        <span class="row-stat"><strong>${ride.duration}</strong><span>DURATION</span></span>
-        <span class="row-stat"><strong>${ride.avg}</strong><span>AVG</span></span>
+      <button class="row-stats" data-open-ride="${escapeAttribute(ride.id)}" type="button">
+        <span class="row-stat"><strong>${escapeHtml(ride.distance)}</strong><span>DISTANCE</span></span>
+        <span class="row-stat"><strong>${escapeHtml(ride.duration)}</strong><span>DURATION</span></span>
+        <span class="row-stat"><strong>${escapeHtml(ride.avg)}</strong><span>AVG</span></span>
       </button>
       <div class="ride-row-actions">
-        <button class="icon-button" type="button" data-favorite="${ride.id}" aria-label="Favorite ride">${icon("icon-star")}</button>
-        <button class="icon-button" type="button" data-delete-ride="${ride.id}" aria-label="Delete ride">${icon("icon-trash")}</button>
+        <button class="icon-button" type="button" data-favorite="${escapeAttribute(ride.id)}" aria-label="Favorite ride">${icon("icon-star")}</button>
+        <button class="icon-button" type="button" data-delete-ride="${escapeAttribute(ride.id)}" aria-label="Delete ride">${icon("icon-trash")}</button>
         <span class="stars" aria-label="${ride.rating || 0} star rating">${renderStars(ride.rating, ride.id, false)}</span>
       </div>
     </article>
@@ -278,11 +753,12 @@ function renderRides() {
 }
 
 function safetyBadge(score) {
-  const color = score >= 80 ? "#30a46c" : score >= 60 ? "#ff8a00" : "#e5484d";
+  const displayScore = Number.isFinite(Number(score)) ? Number(score) : 0;
+  const color = displayScore >= 80 ? "#30a46c" : displayScore >= 60 ? "#ff8a00" : "#e5484d";
   return `
     <span class="safety-badge" style="--badge-color:${color}">
       ${icon("icon-shield")}
-      ${score}
+      ${displayScore || "-"}
     </span>
   `;
 }
@@ -291,7 +767,7 @@ function renderStars(rating, rideId, large) {
   let html = "";
   for (let i = 1; i <= 5; i += 1) {
     html += `
-      <button class="star-button ${i <= rating ? "filled" : ""}" type="button" data-rate="${rideId}:${i}" aria-label="${i} stars">
+      <button class="star-button ${i <= rating ? "filled" : ""}" type="button" data-rate="${escapeAttribute(`${rideId}:${i}`)}" aria-label="${i} stars">
         ${icon("icon-star")}
       </button>
     `;
@@ -302,6 +778,7 @@ function renderStars(rating, rideId, large) {
 function openRecap(id) {
   const ride = rides.find((item) => item.id === id);
   if (!ride) return;
+  openRecapRideId = id;
   const scoreColor = ride.score >= 80 ? "#30a46c" : ride.score >= 50 ? "#ff8a00" : "#e5484d";
   $("#recapContent").innerHTML = `
     <div class="card route-card">
@@ -313,21 +790,21 @@ function openRecap(id) {
 
     <div class="card">
       <div class="stat-grid">
-        <div class="stat-tile"><strong>${ride.distance}</strong><span>mi</span><small>DISTANCE</small></div>
-        <div class="stat-tile"><strong>${ride.duration}</strong><small>DURATION</small></div>
-        <div class="stat-tile"><strong>${ride.avg}</strong><span>mph</span><small>AVG SPEED</small></div>
-        <div class="stat-tile"><strong>${ride.hazards}</strong><small>HAZARDS</small></div>
+        <div class="stat-tile"><strong>${escapeHtml(ride.distance)}</strong><span>mi</span><small>DISTANCE</small></div>
+        <div class="stat-tile"><strong>${escapeHtml(ride.duration)}</strong><small>DURATION</small></div>
+        <div class="stat-tile"><strong>${escapeHtml(ride.avg)}</strong><span>mph</span><small>AVG SPEED</small></div>
+        <div class="stat-tile"><strong>${escapeHtml(ride.hazards)}</strong><small>HAZARDS</small></div>
       </div>
     </div>
 
     <div class="card">
       <div class="section-heading">
         <span>AI RIDE SUMMARY</span>
-        <span class="ai-badge" style="--badge-color:${scoreColor}">${ride.ratingWord} ${ride.score}</span>
+        <span class="ai-badge" style="--badge-color:${scoreColor}">${escapeHtml(ride.ratingWord)} ${escapeHtml(ride.score || "-")}</span>
       </div>
-      <p class="summary-text">${ride.summary}</p>
+      <p class="summary-text">${escapeHtml(ride.summary)}</p>
       ${ride.potholes ? `<p class="muted">${ride.potholes} pothole${ride.potholes === 1 ? "" : "s"} detected</p>` : ""}
-      <div class="chips">${ride.tags.map((tag) => `<span class="chip">${tag.replaceAll("_", " ")}</span>`).join("")}</div>
+      <div class="chips">${ride.tags.map((tag) => `<span class="chip">${escapeHtml(String(tag).replaceAll("_", " "))}</span>`).join("")}</div>
     </div>
 
     <div class="card">
@@ -343,8 +820,10 @@ function openRecap(id) {
       <div class="photo-grid">
         ${(ride.photos.length ? ride.photos : ["empty", "empty", "empty"]).map((photo) => `
           <span class="photo-cell">
-            ${icon("icon-camera")}
-            ${photo === "machine" ? `<span class="machine-dot">${icon("icon-camera")}</span>` : ""}
+            ${typeof photo === "object" && photo.url
+              ? `<img src="${escapeAttribute(photo.url)}" alt="">`
+              : icon("icon-camera")}
+            ${photo === "machine" || photo?.kind === "machine" ? `<span class="machine-dot">${icon("icon-camera")}</span>` : ""}
           </span>
         `).join("")}
       </div>
@@ -562,6 +1041,18 @@ function attachEvents() {
     addBleLine(`rx ${command} -> ok`);
     toast("Pi command received");
   });
+  $("#connectSupabaseButton").addEventListener("click", () => {
+    connectSupabaseFromForm();
+  });
+  $("#clearSupabaseButton").addEventListener("click", clearSupabaseConfig);
+  $("#syncNowButton").addEventListener("click", () => {
+    if (supabaseClient) {
+      syncFromSupabase();
+    } else {
+      showTab("profile");
+      toast("Add Supabase config");
+    }
+  });
   $("#chooseContactButton").addEventListener("click", () => toast("Contact selected"));
   $("#sheetCancel").addEventListener("click", closeSheet);
   $("#actionSheet").addEventListener("click", (event) => {
@@ -573,4 +1064,6 @@ renderHazards();
 renderRides();
 renderBleLog();
 attachEvents();
+restoreSupabaseForm();
+initSupabase();
 setTitle("map");

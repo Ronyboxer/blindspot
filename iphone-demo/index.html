@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Blind Spot iPhone Demo</title>
     <meta name="description" content="Interactive GitHub Pages demo of the Blind Spot iPhone app.">
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
@@ -63,6 +64,12 @@
       <symbol id="icon-chevron" viewBox="0 0 24 24">
         <path d="m9 5 7 7-7 7"></path>
       </symbol>
+      <symbol id="icon-sync" viewBox="0 0 24 24">
+        <path d="M20 12a8 8 0 0 1-13.6 5.7L4 15"></path>
+        <path d="M4 15v5h5"></path>
+        <path d="M4 12A8 8 0 0 1 17.6 6.3L20 9"></path>
+        <path d="M20 9V4h-5"></path>
+      </symbol>
     </svg>
 
     <main class="stage">
@@ -108,6 +115,11 @@
               <div class="section-heading">
                 <span>LIVE HAZARDS</span>
                 <strong id="hazardCount">0</strong>
+              </div>
+              <div class="sync-strip" id="syncStrip">
+                <span class="sync-dot" id="syncDot"></span>
+                <span id="syncStatusText">Mock data</span>
+                <button id="syncNowButton" type="button">Sync</button>
               </div>
               <div class="hazard-list" id="hazardList"></div>
             </div>
@@ -184,6 +196,26 @@
                   <span>PHONE</span>
                   <input value="(555) 123-4567" aria-label="Phone">
                 </label>
+              </div>
+
+              <div class="card supabase-card">
+                <div class="section-heading">
+                  <span>SUPABASE SYNC</span>
+                  <strong id="supabaseStateLabel">Mock</strong>
+                </div>
+                <label>
+                  <span>PROJECT URL</span>
+                  <input id="supabaseUrlInput" placeholder="https://project-ref.supabase.co" aria-label="Supabase project URL">
+                </label>
+                <label>
+                  <span>PUBLISHABLE / ANON KEY</span>
+                  <input id="supabaseKeyInput" type="password" placeholder="sb_publishable_... or anon key" aria-label="Supabase publishable key">
+                </label>
+                <div class="button-row">
+                  <button class="primary-button" id="connectSupabaseButton" type="button">Connect</button>
+                  <button class="secondary-button" id="clearSupabaseButton" type="button">Clear</button>
+                </div>
+                <p class="muted" id="supabaseStatusLine">Not connected. Demo data is local.</p>
               </div>
 
               <div class="card">
@@ -304,6 +336,7 @@
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./app.js"></script>
   </body>
 </html>
