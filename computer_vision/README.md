@@ -129,3 +129,35 @@ You will need the model in the `models/` folder, follow the specifications in ma
 ```bash
 uv run main.py --model models/tusimple.onnx
 ```
+
+---
+
+## Bike accessibility scoring
+
+For Blind Spot's bike-specific map layer, use the post-ride image analyzer:
+
+```bash
+uv run analyze_bike_accessibility.py --images ../data/lane_tests
+```
+
+It rates each photo for cycling accessibility and writes annotated outputs to
+`../data/bike_accessibility/results/`. The local pass looks for:
+
+- green bike-lane/path paint in the road area
+- possible bicycle/sharrow pavement symbols
+- generic lane-line support from the UFLD lane model
+- rough / moderate / smooth surface quality
+
+For a Hack Club AI vision pass, set an API key and use hybrid or explicit
+Hack Club mode:
+
+```bash
+set HACKCLUB_AI_API_KEY=...
+uv run analyze_bike_accessibility.py --provider hackclub --images ../data/lane_tests
+```
+
+`hybrid` is the default: it uses Hack Club AI when the key is present and falls
+back to local CV when it is not. The output includes a 0-100 score, `good` /
+`fair` / `poor` rating, labels, and a short human-readable description.
+The default Hack Club vision model is `qwen/qwen3.7-plus`; override it with
+`--hackclub-model` if needed.

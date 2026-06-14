@@ -9,3 +9,31 @@ node_modules/
 
 # venv
 **/.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# local/generated data
+data/
+computer_vision/models/
+
+# local config and secrets
+.mcp.json
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.local
+.env.*.local
+codex.md
+*.pem
+*.key
+*.p12
+*.mobileprovision
+secrets.*
