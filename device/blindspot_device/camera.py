@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 from uuid import uuid4
 
 
@@ -72,11 +73,21 @@ class PiCamera(Camera):
         except ImportError as exc:
             raise RuntimeError("Install picamera2 on the Raspberry Pi to use PiCamera") from exc
 
-        self._camera = Picamera2()
+        self._camera = self._open_camera(Picamera2)
         self._camera.configure(self._camera.create_still_configuration())
         self._camera.start()
         self._video_path: Path | None = None
         self._video_encoder = None
+
+    def _open_camera(self, picamera_cls: type) -> object:
+        last_error: Exception | None = None
+        for _ in range(12):
+            try:
+                return picamera_cls()
+            except (IndexError, RuntimeError) as exc:
+                last_error = exc
+                time.sleep(2)
+        raise RuntimeError("Pi camera did not become available") from last_error
 
     def capture(self, photos_dir: Path, prefix: str = "capture") -> Path:
         if self.is_recording_video:
