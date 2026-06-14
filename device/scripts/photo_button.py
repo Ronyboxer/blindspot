@@ -13,7 +13,7 @@ from device.blindspot_device.button import (
     run_gesture_loop,
 )
 from device.blindspot_device.ble_bridge import BleRidePeripheral
-from device.blindspot_device.camera import MockCamera, PiCamera
+from device.blindspot_device.camera import LazyPiCamera, MockCamera
 from device.blindspot_device.config import DeviceConfig
 from device.blindspot_device.gps import GpsFix
 from device.blindspot_device.led_strip import ConsoleLedStrip, NeoPixelStrip, NullLedStrip
@@ -51,7 +51,7 @@ def main() -> None:
     config = DeviceConfig()
     config.ensure_dirs()
 
-    camera = MockCamera() if args.mock else PiCamera()
+    camera = MockCamera() if args.mock else LazyPiCamera()
     button = ConsoleButton() if args.mock else GpioButton(args.button_gpio)
     led_enabled = config.led_enabled and not args.no_led
     if args.mock:

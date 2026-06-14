@@ -66,6 +66,38 @@ class MockCamera(Camera):
         return path
 
 
+class LazyPiCamera(Camera):
+    def __init__(self) -> None:
+        self._camera: PiCamera | None = None
+        self._fallback: MockCamera | None = None
+
+    def capture(self, photos_dir: Path, prefix: str = "capture") -> Path:
+        return self._get_camera().capture(photos_dir, prefix)
+
+    @property
+    def is_recording_video(self) -> bool:
+        return self._camera.is_recording_video if self._camera is not None else False
+
+    def start_video(self, videos_dir: Path, prefix: str = "video") -> Path:
+        return self._get_camera().start_video(videos_dir, prefix)
+
+    def stop_video(self) -> Path | None:
+        if self._camera is None:
+            return None
+        return self._camera.stop_video()
+
+    def _get_camera(self) -> Camera:
+        if self._camera is not None:
+            return self._camera
+        try:
+            self._camera = PiCamera()
+            return self._camera
+        except Exception:
+            if self._fallback is None:
+                self._fallback = MockCamera()
+            return self._fallback
+
+
 class PiCamera(Camera):
     def __init__(self) -> None:
         try:
