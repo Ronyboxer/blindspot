@@ -136,7 +136,7 @@ def main() -> None:
             leds.capturing()
             photo_path: Path = camera.capture(config.photos_dir, prefix="manual_flag")
             print(f"gesture=single photo_saved={photo_path}")
-            emit("photo_saved", path=str(photo_path), event_type="manual_flag")
+            emit("photo_saved", path=str(photo_path), capture_event_type="manual_flag")
             if active_ride_id is None:
                 active_ride_id = uploader.current_ride_id()
                 if active_ride_id:
@@ -169,11 +169,15 @@ def main() -> None:
                     ride_id=active_ride_id,
                     bucket=upload.bucket,
                     storage_path=upload.storage_path,
-                    event_type="manual_flag",
+                    capture_event_type="manual_flag",
                 )
             else:
                 print("gesture=single supabase_skipped=not_configured")
-                emit("photo_upload_skipped", ride_id=active_ride_id, event_type="manual_flag")
+                emit(
+                    "photo_upload_skipped",
+                    ride_id=active_ride_id,
+                    capture_event_type="manual_flag",
+                )
             leds.saved()
         except Exception as exc:
             print(f"gesture=single photo_error={exc}")
