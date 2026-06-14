@@ -3,6 +3,9 @@ node_modules/
 
 # macOS-specific files
 .DS_Store
+*.swp
+*~.nib
+*.log
 
 # nix
 **/.direnv/
@@ -37,3 +40,29 @@ codex.md
 *.p12
 *.mobileprovision
 secrets.*
+
+# XcodeGen generated files
+BlindSpot.xcodeproj/
+Info.plist
+
+# Xcode / build artifacts
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+**/xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Firebase / app secrets
+GoogleService-Info.plist
+**/GoogleService-Info.plist
+BlindSpot/Config/Secrets.swift

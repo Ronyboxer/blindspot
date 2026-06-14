@@ -1,0 +1,110 @@
+# XcodeGen spec for Blind Spot.
+#
+# Generate the project from this file (see bootstrap.sh):
+#
+#     brew install xcodegen
+#     xcodegen generate
+#     open BlindSpot.xcodeproj
+#
+# Re-run `xcodegen generate` any time files are added/removed or this file changes.
+
+name: BlindSpot
+
+options:
+  bundleIdPrefix: com.ronakrupani
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true   # mirror the folder structure as Xcode groups
+
+# --- Swift Package dependencies ---
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    from: "11.0.0"
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: "7.1.0"
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    from: "2.0.0"
+
+targets:
+  BlindSpot:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+
+    # Pull in every file under BlindSpot/. Swift files become sources; fonts and
+    # GoogleService-Info.plist become copied resources. *.example.swift is a
+    # committed template only — exclude it from the build.
+    sources:
+      - path: BlindSpot
+        excludes:
+          - "**/*.example.swift"
+
+    dependencies:
+      - package: Firebase
+        product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseCore
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: Supabase
+        product: Supabase
+
+    # Generated Info.plist (kept at repo root, outside sources so it isn't also
+    # bundled as a resource). UIAppFonts + the Google URL scheme need a real plist.
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Blind Spot
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+
+        # Keep GPS route tracking running while the app is backgrounded mid-ride.
+        UIBackgroundModes:
+          - location
+
+        # Google Sign-In redirect: the REVERSED_CLIENT_ID from GoogleService-Info.plist.
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - com.googleusercontent.apps.1050272644717-7gquth0u2i90a8j53865b9drfpq3h1oe
+
+        UIAppFonts:
+          - InstrumentSerif-Regular.ttf
+          - InstrumentSerif-Italic.ttf
+          - JetBrainsMono-Regular.ttf
+          - JetBrainsMono-Medium.ttf
+          - JetBrainsMono-SemiBold.ttf
+          - JetBrainsMono-Bold.ttf
+          - JetBrainsMono-ExtraBold.ttf
+
+        # Privacy usage strings (now exercised: location + motion live this milestone).
+        NSLocationWhenInUseUsageDescription: "Blind Spot uses your location to map your ride and the hazards you encounter."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Blind Spot uses your location during rides to track your route and detect crashes, even when the screen is off."
+        NSMotionUsageDescription: "Blind Spot uses motion data to detect impacts, hard braking, and crashes during your ride."
+        NSCameraUsageDescription: "Blind Spot uses the camera to capture photos of road hazards."
+        # Local network: legacy hotspot path (kept; not the current Pi integration).
+        NSLocalNetworkUsageDescription: "Blind Spot lets your Raspberry Pi camera start and stop rides over your iPhone's Personal Hotspot."
+        # Bluetooth: the Raspberry Pi connects over BLE to start/stop rides and read the ride id.
+        NSBluetoothAlwaysUsageDescription: "Blind Spot uses Bluetooth so your Raspberry Pi can start and stop rides and receive the active ride id."
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ronakrupani.blindspot
+        PRODUCT_NAME: BlindSpot
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"          # iPhone only
+
+        # --- Signing (your personal team, baked in so regen keeps it) ---
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: JAHXMK8F3Y
+
+        # --- Device launch reliability (see README) ---
+        # Disables Xcode 16+ "debug dylib", which SIGKILLs generated-project apps
+        # in dyld on physical devices. Keep this NO.
+        ENABLE_DEBUG_DYLIB: NO
